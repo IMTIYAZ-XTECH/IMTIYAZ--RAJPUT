@@ -4,7 +4,7 @@
   "description": "A WhatsApp Bot Created By IMTIYAZ-RAJPUT",
   "main": "index.js",
   "scripts": {
-    "start": "pm2 start index.js --deep-monitoring --attach --name ADEEL-MD",
+    "start": "pm2 start index.js --deep-monitoring --attach --name IMTIYAZ-RAJPUT",
     "stop": "pm2 stop IMTIYAZ-RAJPUT",
     "restart": "pm2 restart IMTIYAZ-RAJPUT"
   },
