@@ -15,12 +15,12 @@ const {
     MessageRetryMap,
     generateForwardMessageContent,
     generateWAMessageFromContent,
-    generateMessageID, makeInMemoryStore,
+    generateMessageID,
+    makeInMemoryStore,
     jidDecode,
     fetchLatestBaileysVersion,
     Browsers
   } = require('@whiskeysockets/baileys')
-  
   
   const l = console.log
   const { getBuffer, getGroupAdmins, getRandom, h2k, isUrl, Json, runtime, sleep, fetchJson } = require('./lib/functions')
@@ -48,32 +48,46 @@ const {
   
   const tempDir = path.join(os.tmpdir(), 'cache-temp')
   if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir)
+      fs.mkdirSync(tempDir, { recursive: true })
   }
   
   const clearTempDir = () => {
       fs.readdir(tempDir, (err, files) => {
-          if (err) throw err;
+          if (err) return console.error('TempDir read error:', err);
           for (const file of files) {
               fs.unlink(path.join(tempDir, file), err => {
-                  if (err) throw err;
+                  if (err) console.error('TempDir unlink error:', err);
               });
           }
       });
   }
   
-  // Clear the temp directory every 5 minutes
   setInterval(clearTempDir, 5 * 60 * 1000);
   
+  const groupMetadataCache = new Map();
+  
+  const getCachedGroupMetadata = async (conn, jid) => {
+      const now = Date.now();
+      const cached = groupMetadataCache.get(jid);
+   
+      if (cached && (now - cached.time) < 5 * 60 * 1000) {
+          return cached.data;
+      }
+      try {
+          const data = await conn.groupMetadata(jid);
+          groupMetadataCache.set(jid, { data, time: now });
+          return data;
+      } catch (e) {
+          return cached ? cached.data : {};
+      }
+  };
+
 //===================SESSION-AUTH============================
 if (!fs.existsSync(__dirname + '/sessions/creds.json')) {
     if (config.SESSION_ID && config.SESSION_ID.trim() !== "") {
-        const sessdata = config.SESSION_ID.replace("IMTIYAZ-RAJPUT~", '');
+        const sessdata = config.SESSION_ID.replace("IMTIYAZ-MD~", '');
         try {
-            // Decode base64 string
             const decodedData = Buffer.from(sessdata, 'base64').toString('utf-8');
-            
-            // Write decoded data to creds.json
             fs.writeFileSync(__dirname + '/sessions/creds.json', decodedData);
             console.log("✅ Session loaded from SESSION_ID");
         } catch (err) {
@@ -81,16 +95,13 @@ if (!fs.existsSync(__dirname + '/sessions/creds.json')) {
             throw err;
         }
     } else {
-        // Agar SESSION_ID nahi hai to pairing system
         console.log("⚡ No SESSION_ID found → Using Pairing System");
-
         (async () => {
             const { state, saveCreds } = await useMultiFileAuthState(__dirname + '/sessions');
             const sock = makeWASocket({
                 auth: state,
                 printQRInTerminal: false,
             });
-
             if (!state.creds?.me) {
                 rl.question("📱 Enter your WhatsApp number with country code: ", async (number) => {
                     try {
@@ -102,7 +113,6 @@ if (!fs.existsSync(__dirname + '/sessions/creds.json')) {
                     }
                 });
             }
-
             sock.ev.on("creds.update", saveCreds);
             sock.ev.on("connection.update", ({ connection }) => {
                 if (connection === "open") {
@@ -116,8 +126,8 @@ if (!fs.existsSync(__dirname + '/sessions/creds.json')) {
 const express = require("express");
 const app = express();
 const port = process.env.PORT || 9090;
-  
-  //=============================================
+
+  let reconnectDelay = 3000;
   
   async function connectToWA() {
   console.log("Connecting to WhatsApp ⏳️...");
@@ -128,22 +138,32 @@ const port = process.env.PORT || 9090;
           logger: P({ level: 'silent' }),
           printQRInTerminal: false,
           browser: Browsers.macOS("Firefox"),
-          syncFullHistory: true,
+          
+          syncFullHistory: false,
           auth: state,
-          version
+          version,
+          getMessage: async () => ({ conversation: '' })
           })
       
       conn.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update
     if (connection === 'close') {
-      if (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut) {
-        connectToWA();
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      if (shouldReconnect) {
+      
+        console.log(`Reconnecting in ${reconnectDelay/1000}s...`);
+        setTimeout(() => connectToWA(), reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+      } else {
+        console.log("❌ Logged out. Please re-add session.");
       }
     } else if (connection === 'open') {
+      reconnectDelay = 3000;
       console.log('🧬 Installing Plugins')
-      const path = require('path');
+      const pluginPath = require('path');
       fs.readdirSync("./plugins/").forEach((plugin) => {
-        if (path.extname(plugin).toLowerCase() == ".js") {
+        if (pluginPath.extname(plugin).toLowerCase() == ".js") {
           require("./plugins/" + plugin);
         }
       });
@@ -152,41 +172,41 @@ const port = process.env.PORT || 9090;
       
       global.alwaysOnline = config.ALWAYS_ONLINE === 'true'
 
-      // ALWAYS ONLINE SYSTEM
       if (!global._alwaysOnlineInterval) {
-  global._alwaysOnlineInterval = setInterval(async () => {
-    try {
-      if (global.alwaysOnline) {
-        await conn.sendPresenceUpdate('available')
-      } else {
-        await conn.sendPresenceUpdate('unavailable')
+        global._alwaysOnlineInterval = setInterval(async () => {
+          try {
+            if (global.alwaysOnline) {
+              await conn.sendPresenceUpdate('available')
+            } else {
+              await conn.sendPresenceUpdate('unavailable')
+            }
+          } catch (e) {}
+        }, 8000)
       }
-    } catch (e) {}
-  }, 8000)
-}
+
       if (global.alwaysOnline) {
         try { await conn.sendPresenceUpdate('available') } catch(e) {}
       }
       
       const myJid = jidNormalizedUser(conn.user.id);
 
-      let up = `*HELLO THERE ADEEL-MD USER*
+      let up = `*HELLO THERE IMTIYAZ-RAJPUT USER*
 
-> *sɪᴍᴘʟᴇ sᴛʀᴀɪɢʜᴛ ғᴏʀᴡᴀʀᴅ ʙᴜᴛ ʟᴏᴀᴅᴇᴅ ᴡɪᴛʜ ғᴇᴀᴛᴜʀᴇs 🎊 ᴍᴇᴇᴛ ᴀᴅᴇᴇʟ-ᴍᴅ ᴡʜᴀᴛsᴀᴘᴘ ʙᴏᴛ*
+> *sɪᴍᴘʟᴇ sᴛʀᴀɪɢʜᴛ ғᴏʀᴡᴀʀᴅ ʙᴜᴛ ʟᴏᴀᴅᴇᴅ ᴡɪᴛʜ ғᴇᴀᴛᴜʀᴇs 🎊 ᴍᴇᴇᴛ ɪᴍᴛɪʏᴀᴢ-ʀᴀᴊᴘᴜᴛ ᴡʜᴀᴛsᴀᴘᴘ ʙᴏᴛ*
 
-- *THANKS FOR USING ADEEL-MD 🚩*
+- *THANKS FOR USING IMTIYAZ-RAJPUT 🚩*
 
 > *ᴊᴏɪɴ ᴡʜᴀᴛsᴀᴘᴘ ᴄʜᴀɴɴᴇʟ* ⤵️
  
-https://whatsapp.com/channel/0029VbBmz4V5vKAIaWfYPT0C 
+https://whatsapp.com/channel/0029VazD8PoHbFV4iw09kk20 
 
 - *YOUR PREFIX:* = ${prefix}
 
 > *ᴅᴏɴᴛ ғᴏʀɢᴇᴛ ᴛᴏ ɢɪᴠᴇ sᴛᴀʀ ᴛᴏ ʀᴇᴘᴏ* ⬇️
 
-https://github.com/Adeel-Xtech/ADEEL-MD
+https://github.com/IMTIYAZ-XTECH/IMTIYAZ--RAJPUT
 
-> © ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴀᴅᴇᴇʟ-ᴍᴅ 🍨`;
+> © ᴘᴏᴡᴇʀᴇᴅ ʙʏ ɪᴍᴛɪʏᴀᴢ-ʀᴀᴊᴘᴜᴛ 🍨`;
 
       try {
         await conn.sendMessage(myJid, { 
@@ -204,13 +224,10 @@ https://github.com/Adeel-Xtech/ADEEL-MD
   conn.ev.on("call", async (json) => {
     try {
       if (config.ANTI_CALL !== 'true') return;
-
       for (const call of json) {
         if (call.status !== 'offer') continue;
-
         const id = call.id;
         const from = call.from;
-
         await conn.rejectCall(id, from);
         await conn.sendMessage(from, {
           text: config.REJECT_MSG || '*📞 ᴄαℓℓ ɴσт αℓℓσωє∂ ιɴ тнιѕ ɴᴜмвєʀ уσυ ∂σɴт нανє ᴘєʀмιѕѕισɴ 📵*'
@@ -222,34 +239,24 @@ https://github.com/Adeel-Xtech/ADEEL-MD
     }
   });
 
-//============================== 
-
-
-  //==============================
-
-
-  //============================== 
-
   conn.ev.on("group-participants.update", (update) => GroupEvents(conn, update));
 
-  //=============antidelete=======
   conn.ev.on('messages.update', async (updates) => {
     if (config.ANTI_DELETE !== 'true') return;
     await AntiDelete(conn, updates);
   });
 	  
-  //=============readstatus=======
-        
   conn.ev.on('messages.upsert', async(mek) => {
+    try {
     mek = mek.messages[0]
     if (!mek.message) return
     mek.message = (getContentType(mek.message) === 'ephemeralMessage') 
     ? mek.message.ephemeralMessage.message 
     : mek.message;
-    console.log("New Message Detected:", JSON.stringify(mek, null, 2));
+
+
   if (config.READ_MESSAGE === 'true') {
-    await conn.readMessages([mek.key]);  // Mark message as read
-    console.log(`Marked message from ${mek.key.remoteJid} as read.`);
+    await conn.readMessages([mek.key]);
   }
     if(mek.message.viewOnceMessageV2)
     mek.message = (getContentType(mek.message) === 'ephemeralMessage') ? mek.message.ephemeralMessage.message : mek.message
@@ -261,11 +268,11 @@ https://github.com/Adeel-Xtech/ADEEL-MD
   const user = mek.key.participant
   const text = `${config.AUTO_STATUS_MSG}`
   await conn.sendMessage(user, { text: text, react: { text: '💜', key: mek.key } }, { quoted: mek })
-            }
-            await Promise.all([
-              saveMessage(mek),
-            ]);
-            storeMessage(mek);
+  }
+
+  await Promise.all([saveMessage(mek)]);
+  storeMessage(mek);
+
   const m = sms(conn, mek)
   const type = getContentType(mek.message)
   const content = JSON.stringify(mek.message)
@@ -286,9 +293,11 @@ https://github.com/Adeel-Xtech/ADEEL-MD
   const isMe = botNumber.includes(senderNumber)
   const isOwner = ownerNumber.includes(senderNumber) || isMe
   const botNumber2 = await jidNormalizedUser(conn.user.id);
-  const groupMetadata = isGroup ? await conn.groupMetadata(from).catch(e => {}) : ''
+  
+  
+  const groupMetadata = isGroup ? await getCachedGroupMetadata(conn, from) : ''
   const groupName = isGroup ? groupMetadata.subject : ''
-  const participants = isGroup ? await groupMetadata.participants : ''
+  const participants = isGroup ? groupMetadata.participants : ''
   const groupAdmins = isGroup ? await getGroupAdmins(participants) : ''
   const isBotAdmins = isGroup ? groupAdmins.includes(botNumber2) : false
   const isAdmins = isGroup ? groupAdmins.includes(sender) : false
@@ -297,19 +306,17 @@ https://github.com/Adeel-Xtech/ADEEL-MD
   conn.sendMessage(from, { text: teks }, { quoted: mek })
   }
   const udp = botNumber.split(`@`)[0]
-const Adeel = ['918899220519','918899220519'] 
+const imtiyaz = ['918899220519','918899220519'] 
 const dev = [] 
 
-let isCreator = [udp, ...Adeel, ...dev]
+let isCreator = [udp, ...imtiyaz, ...dev]
     .map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net')
     .includes(sender);
 
-    if (isCreator && mek.text.startsWith('%')) {
+    if (isCreator && mek.text && mek.text.startsWith('%')) {
 					let code = budy.slice(2);
 					if (!code) {
-						reply(
-							`Provide me with a query to run Master!`,
-						);
+						reply(`Provide me with a query to run Master!`);
 						return;
 					}
 					try {
@@ -322,12 +329,10 @@ let isCreator = [udp, ...Adeel, ...dev]
 					}
 					return;
 				}
-    if (isCreator && mek.text.startsWith('$')) {
+    if (isCreator && mek.text && mek.text.startsWith('$')) {
 					let code = budy.slice(2);
 					if (!code) {
-						reply(
-							`Provide me with a query to run Master!`,
-						);
+						reply(`Provide me with a query to run Master!`);
 						return;
 					}
 					try {
@@ -346,7 +351,7 @@ let isCreator = [udp, ...Adeel, ...dev]
 				}
  //================ownerreact==============
     
-if (senderNumber.includes("918899220519") && !isReact) {
+if (senderNumber.includes("923035512967") && !isReact) {
   const reactions = ["👑", "🤍", "💗"];
   const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
   m.react(randomReaction);
@@ -354,7 +359,6 @@ if (senderNumber.includes("918899220519") && !isReact) {
 
   //==========public react============//
   
-// Auto React for all messages (public and owner)
 if (!isReact && config.AUTO_REACT === 'true') {
     const reactions = [
         '🌼', '❤️', '💐', '🔥', '🏵️', '❄️', '🧊', '🐳', '💥', '🥀', '❤‍🔥', '🥹', '😩', '🫣', 
@@ -373,14 +377,11 @@ if (!isReact && config.AUTO_REACT === 'true') {
         '✅', '🔰', '〽️', '🌐', '🌀', '⤴️', '⤵️', '🔴', '🟢', '🟡', '🟠', '🔵', '🟣', '⚫', 
         '⚪', '🟤', '🔇', '🔊', '📢', '🔕', '♥️', '🕐', '🚩', '🇵🇰'
     ];
-
     const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
     m.react(randomReaction);
 }
           
-// Custom React for all messages (public and owner)
 if (!isReact && config.CUSTOM_REACT === 'true') {
-    // Use custom emojis from the configuration (fallback to default if not set)
     const reactions = (config.CUSTOM_REACT_EMOJIS || '🥲,😂,👍🏻,🙂,😔').split(',');
     const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
     m.react(randomReaction);
@@ -392,14 +393,12 @@ if (!isReact && config.CUSTOM_REACT === 'true') {
   if(!isOwner && !isGroup && config.MODE === "groups") return
    
   // take commands 
-                 
   const events = require('./command')
   const cmdName = isCmd ? body.slice(1).trim().split(" ")[0].toLowerCase() : false;
   if (isCmd) {
   const cmd = events.commands.find((cmd) => cmd.pattern === (cmdName)) || events.commands.find((cmd) => cmd.alias && cmd.alias.includes(cmdName))
   if (cmd) {
   if (cmd.react) conn.sendMessage(from, { react: { text: cmd.react, key: mek.key }})
-  
   try {
   cmd.function(conn, mek, m,{from, quoted, body, isCmd, command, args, q, text, isGroup, sender, senderNumber, botNumber2, botNumber, pushname, isMe, isOwner, isCreator, groupMetadata, groupName, participants, groupAdmins, isBotAdmins, isAdmins, reply});
   } catch (e) {
@@ -424,7 +423,12 @@ if (!isReact && config.CUSTOM_REACT === 'true') {
   command.function(conn, mek, m,{from, l, quoted, body, isCmd, command, args, q, text, isGroup, sender, senderNumber, botNumber2, botNumber, pushname, isMe, isOwner, isCreator, groupMetadata, groupName, participants, groupAdmins, isBotAdmins, isAdmins, reply})
   }});
   
+  // FIX 8: messages.upsert کے لیے try/catch لگائی
+  } catch (err) {
+    console.error("[MESSAGE HANDLER ERROR]", err);
+  }
   });
+
     //===================================================   
     conn.decodeJid = jid => {
       if (!jid) return jid;
@@ -485,7 +489,6 @@ if (!isReact && config.CUSTOM_REACT === 'true') {
       }
       let type = await FileType.fromBuffer(buffer)
       trueFileName = attachExtension ? (filename + '.' + type.ext) : filename
-          // save to file
       await fs.writeFileSync(trueFileName, buffer)
       return trueFileName
     }
@@ -498,18 +501,8 @@ if (!isReact && config.CUSTOM_REACT === 'true') {
       for await (const chunk of stream) {
           buffer = Buffer.concat([buffer, chunk])
       }
-    
       return buffer
     }
-    
-    /**
-    *
-    * @param {*} jid
-    * @param {*} message
-    * @param {*} forceForward
-    * @param {*} options
-    * @returns
-    */
     //================================================
     conn.sendFileUrl = async (jid, url, caption, quoted, options = {}) => {
                   let mime = '';
@@ -534,7 +527,6 @@ if (!isReact && config.CUSTOM_REACT === 'true') {
                 }
     //==========================================================
     conn.cMod = (jid, copy, text = '', sender = conn.user.id, options = {}) => {
-      //let copy = message.toJSON()
       let mtype = Object.keys(copy.message)[0]
       let isEphemeral = mtype === 'ephemeralMessage'
       if (isEphemeral) {
@@ -555,21 +547,12 @@ if (!isReact && config.CUSTOM_REACT === 'true') {
       else if (copy.key.remoteJid.includes('@broadcast')) sender = sender || copy.key.remoteJid
       copy.key.remoteJid = jid
       copy.key.fromMe = sender === conn.user.id
-    
       return proto.WebMessageInfo.fromObject(copy)
     }
-    
-    
-    /**
-    *
-    * @param {*} path
-    * @returns
-    */
     //=====================================================
     conn.getFile = async(PATH, save) => {
       let res
-      let data = Buffer.isBuffer(PATH) ? PATH : /^data:.*?\/.*?;base64,/i.test(PATH) ? Buffer.from(PATH.split `,` [1], 'base64') : /^https?:\/\//.test(PATH) ? await (res = await getBuffer(PATH)) : fs.existsSync(PATH) ? (filename = PATH, fs.readFileSync(PATH)) : typeof PATH === 'string' ? PATH : Buffer.alloc(0)
-          //if (!Buffer.isBuffer(data)) throw new TypeError('Result is not a buffer')
+      let data = Buffer.isBuffer(PATH) ? PATH : /^data:.*?\/.*?;base64,/i.test(PATH) ? Buffer.from(PATH.split`,`[1], 'base64') : /^https?:\/\//.test(PATH) ? await (res = await getBuffer(PATH)) : fs.existsSync(PATH) ? (filename = PATH, fs.readFileSync(PATH)) : typeof PATH === 'string' ? PATH : Buffer.alloc(0)
       let type = await FileType.fromBuffer(data) || {
           mime: 'application/octet-stream',
           ext: '.bin'
@@ -583,7 +566,6 @@ if (!isReact && config.CUSTOM_REACT === 'true') {
           ...type,
           data
       }
-    
     }
     //=====================================================
     conn.sendFile = async(jid, PATH, fileName, quoted = {}, options = {}) => {
@@ -647,13 +629,6 @@ if (!isReact && config.CUSTOM_REACT === 'true') {
       }, { quoted, ...options })
       return fs.promises.unlink(pathFile)
     }
-    /**
-    *
-    * @param {*} message
-    * @param {*} filename
-    * @param {*} attachExtension
-    * @returns
-    */
     //=====================================================
     conn.sendVideoAsSticker = async (jid, buff, options = {}) => {
       let buffer;
@@ -682,52 +657,15 @@ if (!isReact && config.CUSTOM_REACT === 'true') {
         options
       );
     };
-        /**
-         *
-         * @param {*} jid
-         * @param {*} path
-         * @param {*} quoted
-         * @param {*} options
-         * @returns
-         */
     //=====================================================
     conn.sendTextWithMentions = async(jid, text, quoted, options = {}) => conn.sendMessage(jid, { text: text, contextInfo: { mentionedJid: [...text.matchAll(/@(\d{0,16})/g)].map(v => v[1] + '@s.whatsapp.net') }, ...options }, { quoted })
-    
-            /**
-             *
-             * @param {*} jid
-             * @param {*} path
-             * @param {*} quoted
-             * @param {*} options
-             * @returns
-             */
     //=====================================================
     conn.sendImage = async(jid, path, caption = '', quoted = '', options) => {
-      let buffer = Buffer.isBuffer(path) ? path : /^data:.*?\/.*?;base64,/i.test(path) ? Buffer.from(path.split `,` [1], 'base64') : /^https?:\/\//.test(path) ? await (await getBuffer(path)) : fs.existsSync(path) ? fs.readFileSync(path) : Buffer.alloc(0)
+      let buffer = Buffer.isBuffer(path) ? path : /^data:.*?\/.*?;base64,/i.test(path) ? Buffer.from(path.split`,`[1], 'base64') : /^https?:\/\//.test(path) ? await (await getBuffer(path)) : fs.existsSync(path) ? fs.readFileSync(path) : Buffer.alloc(0)
       return await conn.sendMessage(jid, { image: buffer, caption: caption, ...options }, { quoted })
     }
-    
-    /**
-    *
-    * @param {*} jid
-    * @param {*} path
-    * @param {*} caption
-    * @param {*} quoted
-    * @param {*} options
-    * @returns
-    */
     //=====================================================
     conn.sendText = (jid, text, quoted = '', options) => conn.sendMessage(jid, { text: text, ...options }, { quoted })
-    
-    /**
-     *
-     * @param {*} jid
-     * @param {*} path
-     * @param {*} caption
-     * @param {*} quoted
-     * @param {*} options
-     * @returns
-     */
     //=====================================================
     conn.sendButtonText = (jid, buttons = [], text, footer, quoted = '', options = {}) => {
       let buttonMessage = {
@@ -737,7 +675,6 @@ if (!isReact && config.CUSTOM_REACT === 'true') {
               headerType: 2,
               ...options
           }
-          //========================================================================================================================================
       conn.sendMessage(jid, buttonMessage, { quoted, ...options })
     }
     //=====================================================
@@ -755,31 +692,16 @@ if (!isReact && config.CUSTOM_REACT === 'true') {
       }), options)
       conn.relayMessage(jid, template.message, { messageId: template.key.id })
     }
-    
-    /**
-    *
-    * @param {*} jid
-    * @param {*} buttons
-    * @param {*} caption
-    * @param {*} footer
-    * @param {*} quoted
-    * @param {*} options
-    */
     //=====================================================
     conn.getName = (jid, withoutContact = false) => {
             id = conn.decodeJid(jid);
-
             withoutContact = conn.withoutContact || withoutContact;
-
             let v;
-
             if (id.endsWith('@g.us'))
                 return new Promise(async resolve => {
                     v = store.contacts[id] || {};
-
-                    if (!(v.name.notify || v.subject))
+                    if (!(v.name || v.notify || v.subject))
                         v = conn.groupMetadata(id) || {};
-
                     resolve(
                         v.name ||
                             v.subject ||
@@ -791,15 +713,10 @@ if (!isReact && config.CUSTOM_REACT === 'true') {
             else
                 v =
                     id === '0@s.whatsapp.net'
-                        ? {
-                                id,
-
-                                name: 'WhatsApp',
-                          }
+                        ? { id, name: 'WhatsApp' }
                         : id === conn.decodeJid(conn.user.id)
                         ? conn.user
                         : store.contacts[id] || {};
-
             return (
                 (withoutContact ? '' : v.name) ||
                 v.subject ||
@@ -810,7 +727,6 @@ if (!isReact && config.CUSTOM_REACT === 'true') {
             );
         };
 
-        // Vcard Functionality
         conn.sendContact = async (jid, kon, quoted = '', opts = {}) => {
             let list = [];
             for (let i of kon) {
@@ -842,7 +758,6 @@ if (!isReact && config.CUSTOM_REACT === 'true') {
             );
         };
 
-        // Status aka brio
         conn.setStatus = status => {
             conn.query({
                 tag: 'iq',
