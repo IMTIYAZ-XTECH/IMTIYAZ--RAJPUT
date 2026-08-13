@@ -1,6 +1,6 @@
 name: IMTIYAZ-RAJPUT
 services:
-  - name: adeel_md-service
+  - name: imtiyaz-rajput-service
     type: web
     ports:
       - 5000

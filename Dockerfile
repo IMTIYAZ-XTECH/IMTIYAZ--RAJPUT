@@ -1,8 +1,8 @@
 FROM node:lts-buster
 
-RUN git clone https://github.com/IMTIYAZ-XTECH/IMTIYAZ--RAJPUT.git /root/imtiyaz-bot
+RUN git clone https://github.com/Adeel-Xtech/ADEEL-MD.git /root/adeel-bot
 
-WORKDIR /root/imtiyaz-bot
+WORKDIR /root/adeel-bot
 
 RUN apt-get update && \
     apt-get install -y ffmpeg imagemagick webp && \
