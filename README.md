@@ -49,7 +49,7 @@
   </a>
 </p>
 
-<p align="center"><b>Enter your number with country code — Example: <code>923001234567</code></b></p>
+<p align="center"><b>Enter your number with country code — Example: <code>966503291971</code></b></p>
 
 <a><img src='https://i.imgur.com/LyHic3i.gif'/></a>
 
